@@ -1,6 +1,7 @@
 name: AI Security Review
 
-# Unified Opus-5 security review. Runs on same-repo PRs only (fork-only; never touches upstream).
+# Unified AI security review. Runs on same-repo PRs only (fork-only; never touches upstream).
+# Model: Opus 5 for code changes; Sonnet 5 when a PR only touches docs/assets (cost lever).
 # NOTE: on `pull_request`, GitHub withholds secrets + downgrades GITHUB_TOKEN for EXTERNAL fork PRs,
 # so this effectively covers branches pushed to this repo. Do NOT switch to `pull_request_target`
 # without re-review: that trigger would hand secrets + a writable token to untrusted PR content.
@@ -8,6 +9,12 @@ name: AI Security Review
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# Cancel a stale review when new commits land on the same PR (cost + no duplicate comments).
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -15,15 +22,37 @@ permissions:
 
 jobs:
   security-review:
+    # Skip drafts (wasteful) and dependabot (secrets are withheld, so it would only fail).
+    if: github.event.pull_request.draft == false && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1
           persist-credentials: false # don't write GITHUB_TOKEN into .git/config (zizmor: artipacked)
 
-      - uses: anthropics/claude-code-action@v1
+      - name: Pick model (Sonnet 5 for docs-only PRs, Opus 5 otherwise)
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # A file is "docs/asset-like" if it matches this; if ANY changed file is not, use Opus 5.
+          DOCS='\.(md|mdx|markdown|txt|rst|adoc|png|jpe?g|gif|svg|webp|ico)$|(^|/)(LICENSE|NOTICE|AUTHORS|CHANGELOG|README|CODEOWNERS)([.-][^/]*)?$|^docs/'
+          files=$(gh pr diff "$PR" --repo "$REPO" --name-only)
+          if [ -z "$files" ] || printf '%s\n' "$files" | grep -qvE "$DOCS"; then
+            model=claude-opus-5
+          else
+            model=claude-sonnet-5
+          fi
+          echo "model=$model" >> "$GITHUB_OUTPUT"
+          { echo "### AI review model: \`$model\`"; echo '```'; printf '%s\n' "$files"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1
         with:
           # Subscription first; fall back to the API key only when no OAuth token is configured.
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -47,9 +76,9 @@ jobs:
             You MUST finish by posting exactly ONE PR comment (even if nothing is found — then post
             "No security issues found in this diff."). Run:
             `gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --body "<markdown>"`
-            Start the comment with the heading "## 🔒 AI Security Review (Opus 5)". Posting is required and must be your final action.
+            Start the comment with the heading "## 🔒 AI Security Review (${{ steps.pick.outputs.model }})". Posting is required and must be your final action.
           # Read-only allowlist: no `sed` (s///e exec), no blanket `git` (`-c alias=!cmd` exec), no `gh api` (write API).
           claude_args: |
-            --model claude-opus-5
+            --model ${{ steps.pick.outputs.model }}
             --max-turns 40
             --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(cat:*),Bash(ls:*),Bash(grep:*),Bash(rg:*),Bash(head:*),Bash(tail:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Read,Grep,Glob"
