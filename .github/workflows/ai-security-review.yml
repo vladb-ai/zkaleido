@@ -1,8 +1,10 @@
 name: AI Security Review
 
-# Unified Opus-5 security review, run on every PR (fork-only; does not touch upstream).
+# Unified Opus-5 security review. Runs on same-repo PRs only (fork-only; never touches upstream).
+# NOTE: on `pull_request`, GitHub withholds secrets + downgrades GITHUB_TOKEN for EXTERNAL fork PRs,
+# so this effectively covers branches pushed to this repo. Do NOT switch to `pull_request_target`
+# without re-review: that trigger would hand secrets + a writable token to untrusted PR content.
 # Auth: Claude subscription (CLAUDE_CODE_OAUTH_TOKEN) preferred, ANTHROPIC_API_KEY as fallback.
-# Set at least one as a repo (or org) secret for this to run.
 
 on:
   pull_request:
@@ -10,7 +12,6 @@ on:
 permissions:
   contents: read
   pull-requests: write # to post the review comment
-  id-token: write
 
 jobs:
   security-review:
@@ -18,7 +19,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+          persist-credentials: false # don't write GITHUB_TOKEN into .git/config (zizmor: artipacked)
 
       - uses: anthropics/claude-code-action@v1
         with:
@@ -45,7 +48,8 @@ jobs:
             "No security issues found in this diff."). Run:
             `gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --body "<markdown>"`
             Start the comment with the heading "## 🔒 AI Security Review (Opus 5)". Posting is required and must be your final action.
+          # Read-only allowlist: no `sed` (s///e exec), no blanket `git` (`-c alias=!cmd` exec), no `gh api` (write API).
           claude_args: |
             --model claude-opus-5
             --max-turns 40
-            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Bash(gh pr comment:*),Bash(cat:*),Bash(ls:*),Bash(grep:*),Bash(rg:*),Bash(find:*),Bash(head:*),Bash(tail:*),Bash(sed:*),Bash(git:*),Read,Grep,Glob"
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(cat:*),Bash(ls:*),Bash(grep:*),Bash(rg:*),Bash(head:*),Bash(tail:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Read,Grep,Glob"
