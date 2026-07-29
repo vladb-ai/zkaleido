@@ -61,22 +61,24 @@ jobs:
           use_sticky_comment: true
           prompt: |
             Perform a security review of pull request #${{ github.event.pull_request.number }} in ${{ github.repository }}.
-            Run `gh pr diff ${{ github.event.pull_request.number }}` to get the changes, and read the surrounding code for context.
+            Run `gh pr diff ${{ github.event.pull_request.number }}` for the changes; read surrounding code for context.
 
-            Report only real, exploitable vulnerabilities introduced or exposed by this diff:
-            - Injection (SQL / command / template), unsafe deserialization, path traversal, SSRF
-            - Broken authn/authz, missing access checks, insecure direct object references
-            - Cryptographic misuse, weak randomness, secret / credential exposure
-            - Memory safety, integer overflow/underflow, unchecked arithmetic, panics on untrusted input (watch Rust `unsafe`)
-            - Input-validation gaps, unsafe error handling, resource exhaustion / DoS
+            Analyze thoroughly for real, exploitable vulnerabilities introduced or exposed by this diff:
+            injection (SQL/command/template), unsafe deserialization, path traversal, SSRF, broken authn/authz,
+            IDOR, cryptographic misuse, secret/credential exposure, memory safety / overflow/underflow /
+            panics on untrusted input (watch Rust `unsafe`), input-validation gaps, unsafe error handling,
+            resource exhaustion / DoS. Favor precision over recall.
 
-            For each finding: `file:line`, severity (Critical/High/Medium/Low), a concrete exploit scenario, and a concrete fix.
-            Favor precision over recall — no style/formatting/speculative nits.
-
-            You MUST finish by posting exactly ONE PR comment (even if nothing is found — then post
-            "No security issues found in this diff."). Run:
-            `gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --body "<markdown>"`
-            Start the comment with the heading "## 🔒 AI Security Review (${{ steps.pick.outputs.model }})". Posting is required and must be your final action.
+            Then post EXACTLY ONE PR comment via
+            `gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --body "<markdown>"`,
+            following these OUTPUT RULES strictly (a human reads this — keep it tight):
+            - Always start with the heading "## 🔒 AI Security Review (${{ steps.pick.outputs.model }})".
+            - If you found NO real issues: the ENTIRE body is that heading plus one line — "✅ No security issues found."
+              Do NOT add a "scope reviewed" list, a "what I checked / cleared" section, or any reasoning. Reviewers do not want it.
+            - If you found real issues: list them most-severe-first. For each: a bold one-line title with the severity,
+              then `file:line`, a 1–2 sentence exploit scenario, and a concrete fix. Be concise and actionable —
+              no style/formatting/speculative nits, no "what I cleared" prose.
+            Posting this comment is required and must be your final action.
           # Read-only allowlist: no `sed` (s///e exec), no blanket `git` (`-c alias=!cmd` exec), no `gh api` (write API).
           claude_args: |
             --model ${{ steps.pick.outputs.model }}
